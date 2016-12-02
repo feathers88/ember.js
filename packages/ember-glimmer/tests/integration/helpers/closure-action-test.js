@@ -620,6 +620,58 @@ moduleFor('Helpers test: closure {{action}}', class extends RenderingTest {
     this.assert.equal(outerComponent.get('outerMut'), newValue, 'mut value is set');
   }
 
+  ['@test mut values can be wrapped in actions, does not cause component hooks to fire unnecessarily'](assert) {
+    let clicked = 0;
+    let didReceiveAttrsFired = 0;
+
+    let ClickMeComponent = Component.extend({
+      tagName: 'button',
+
+      click() {
+        this.get('onClick').call(undefined, ++clicked);
+      },
+
+      didReceiveAttrs() {
+        didReceiveAttrsFired++;
+      }
+    });
+
+    this.registerComponent('click-me', {
+      ComponentClass: ClickMeComponent
+    });
+
+    let OuterComponent = Component.extend({
+      clicked: 0
+    });
+
+    this.registerComponent('outer-component', {
+      ComponentClass: OuterComponent,
+      template: `{{#click-me onClick=(action (mut clicked))}}Clicked: {{clicked}}{{/click-me}}`
+    });
+
+    this.render('{{outer-component}}');
+
+    this.assertText('Clicked: 0');
+
+    assert.equal(didReceiveAttrsFired, 1);
+
+    this.runTask(() => {
+      this.rerender();
+    });
+
+    this.assertText('Clicked: 0');
+
+    assert.equal(didReceiveAttrsFired, 1);
+
+    this.runTask(() => {
+      this.$('button').click();
+    });
+
+    this.assertText('Clicked: 1');
+
+    assert.equal(didReceiveAttrsFired, 1);
+  }
+
   ['@test action can create closures over actions']() {
     let first = 'raging robert';
     let second = 'mild machty';

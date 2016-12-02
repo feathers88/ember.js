@@ -3,7 +3,7 @@
 @submodule ember-glimmer
 */
 import { symbol } from 'ember-utils';
-import { CachedReference } from '../utils/references';
+import { assert } from 'ember-metal';
 import {
   Error as EmberError,
   run,
@@ -11,6 +11,9 @@ import {
   flaggedInstrument,
   isNone
 } from 'ember-metal';
+import { EvaluatedPositionalArgs } from 'glimmer-runtime';
+import { ConstReference, combine, isConst } from 'glimmer-reference';
+import { CachedReference } from '../utils/references';
 
 export const INVOKE = symbol('INVOKE');
 export const ACTION = symbol('ACTION');
@@ -261,6 +264,103 @@ export const ACTION = symbol('ACTION');
   @for Ember.Templates.helpers
   @public
 */
+export default function(vm, args) {
+
+  let { named, positional } = args;
+
+  // The first two positional arguments are reserved.
+  // pos[0] is the context (or `this`)
+  // pos[1] is the action name or function
+  // Anything else is an action argument.
+  let context = positional.at(0);
+  let action  = positional.at(1);
+
+  let restArgs;
+
+  if (positional.length === 2) {
+    restArgs = EvaluatedPositionalArgs.empty();
+  } else {
+    restArgs = EvaluatedPositionalArgs.create(positional.values.slice(2));
+  }
+
+  let hasTarget    = named.has('target');
+  let hasValuePath = named.has('valuePath');
+
+  if (action[INVOKE]) {
+    return new ConstReference(createClosureAction(action, action[INVOKE], hasValuePath && named.get('valuePath'), restArgs));
+  }
+
+  if (isConst(action) && isConst(target)) {
+    let actionValue = action.value();
+
+    // WIP
+
+    if (typeof actionValue === )
+  }
+
+  throw new Error("zomg");
+}
+
+function invokeClosureAction(target, action, args) {
+  let payload = { target, args, label: 'glimmer-closure-action' };
+  return flaggedInstrument('interaction.ember-action', payload, () => {
+    return run.join(target, action, ...args);
+  });
+}
+
+function NOOP(args) { return args };
+
+function makeArgsProcessor(valuePathRef, actionArgsRef) {
+  let mergeArgs = NOOP;
+
+  if (actionArgsRef.length > 0) {
+    mergeArgs = function(args) {
+      return actionArgsRef.value().concat(passedArgs);
+    };
+  }
+
+  let readValue = NOOP;
+
+  if (valuePathRef) {
+    readValue = function(args) {
+      let valuePath = valuePathRef();
+
+      if (valuePath && args.length > 0) {
+        args[0] = get(args[0], valuePath);
+      }
+
+      return args;
+    }
+  }
+
+  if (mergeArgs === NOOP && readValue === NOOP) {
+    return NOOP;
+  } else if (mergeArgs === NOOP || readValue === NOOP) {
+    return mergeArgs || readValue;
+  } else {
+    return function(args) {
+      return readValue(mergeArgs(args));
+    };
+  }
+}
+
+function makeStaticClosureAction(target, action, valuePathRef, actionArgsRef) {
+  let processArgs = makeArgsProcessor(valuePathRef, actionArgsRef);
+
+  let closureAction = function(...args) {
+    return invokeClosureAction(target, action, processArgs(args));
+  }
+
+  closureAction[ACTION] = true;
+
+  return closureAction;
+}
+
+function makeDynamicClosureAction(targetRef, actionRef, valuePathRef, actionArgsRef) {
+
+}
+
+
 export class ClosureActionReference extends CachedReference {
   static create(args) {
     // TODO: Const reference optimization.
@@ -332,48 +432,6 @@ export class ClosureActionReference extends CachedReference {
   }
 }
 
-export default function(vm, args) {
-  return ClosureActionReference.create(args);
-}
 
-export function createClosureAction(target, action, valuePath, actionArgs) {
-  let closureAction;
-  let actionArgLength = actionArgs.length;
 
-  if (actionArgLength > 0) {
-    closureAction = function(...passedArguments) {
-      let args = new Array(actionArgLength + passedArguments.length);
 
-      for (let i = 0; i < actionArgLength; i++) {
-        args[i] = actionArgs[i];
-      }
-
-      for (let i = 0; i < passedArguments.length; i++) {
-        args[i + actionArgLength] = passedArguments[i];
-      }
-
-      if (valuePath && args.length > 0) {
-        args[0] = get(args[0], valuePath);
-      }
-
-      let payload = { target, args, label: 'glimmer-closure-action' };
-      return flaggedInstrument('interaction.ember-action', payload, () => {
-        return run.join(target, action, ...args);
-      });
-    };
-  } else {
-    closureAction = function(...args) {
-      if (valuePath && args.length > 0) {
-        args[0] = get(args[0], valuePath);
-      }
-
-      let payload = { target, args, label: 'glimmer-closure-action' };
-      return flaggedInstrument('interaction.ember-action', payload, () => {
-        return run.join(target, action, ...args);
-      });
-    };
-  }
-
-  closureAction[ACTION] = true;
-  return closureAction;
-}
